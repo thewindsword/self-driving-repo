@@ -1,0 +1,79 @@
+# 第 3 层 · 每周巡检 —— 定时把「仓库健康」变成 issue，交给代理处理。
+#
+# 与自愈同理：不直接跑代理，而是创建 issue 并打 fix-me 唤起 Claude Agent。
+# 去重：已存在未关闭的巡检 issue 时不重复创建（README「安全边界」）。
+name: Weekly Maintenance
+
+on:
+  schedule:
+    - cron: '23 9 * * 1' # 每周一 09:23 UTC（错开整点高峰）
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
+      PAT: ${{ secrets.PAT_TOKEN }}
+    steps:
+      - name: 前置检查（PAT 必需）
+        run: |
+          set -euo pipefail
+          [[ -n "$PAT" ]] || {
+            echo "::error title=缺少 PAT_TOKEN::GITHUB_TOKEN 建的 issue 不会触发 Claude Agent workflow，巡检链路不通。配置方法见 README「关于 PAT」。"
+            exit 1
+          }
+
+      - name: 确保标签存在
+        run: |
+          gh label create fix-me --repo "$GITHUB_REPOSITORY" --color d4c5f9 --description "让代理实现该 issue" --force
+          gh label create maintenance --repo "$GITHUB_REPOSITORY" --color 0e8a16 --description "每周巡检" --force
+          gh label create review-this --repo "$GITHUB_REPOSITORY" --color fbca04 --description "触发 AI PR 审查" --force
+          gh label create needs-human --repo "$GITHUB_REPOSITORY" --color e11d21 --description "自动处理达上限，转人工" --force
+
+      - name: 巡检去重
+        id: dedup
+        run: |
+          set -euo pipefail
+          OPEN=$(gh issue list --repo "$GITHUB_REPOSITORY" --label maintenance --state open --json number --jq 'length')
+          if (( OPEN > 0 )); then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::已有未完成的巡检 issue，本次跳过"
+          fi
+
+      - name: 生成巡检内容
+        if: steps.dedup.outputs.skip != 'true'
+        run: |
+          cat > /tmp/inspection.md <<'EOF'
+          ## 巡检清单
+
+          逐项核查。能安全自动修复的直接修复并开 PR（遵守 AGENTS.md 红线）；
+          不确定的问题在本 issue 下留言说明，不要强行修。
+
+          - [ ] 依赖是否有已知安全公告（npm audit / GitHub security advisories）
+          - [ ] lockfile 与 package.json 是否一致（pnpm install --frozen-lockfile 是否通过）
+          - [ ] AGENTS.md 的命令、目录结构是否与实际栈漂移
+          - [ ] CI 时长与失败率是否有异常恶化（Actions 页近 7 天）
+          - [ ] 是否积累了该开 issue 记录的技术债
+
+          全部正常则直接关闭本 issue 并留言「巡检通过」。
+          EOF
+
+      - name: 创建巡检 issue
+        id: create
+        if: steps.dedup.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          URL=$(gh issue create --repo "$GITHUB_REPOSITORY" \
+            --label maintenance \
+            --title "每周巡检 · $(date -u +%F)" \
+            --body-file /tmp/inspection.md)
+          echo "number=${URL##*/}" >> "$GITHUB_OUTPUT"
+
+      - name: 打 fix-me 唤醒代理
+        if: steps.dedup.outputs.skip != 'true'
+        run: gh issue edit "${{ steps.create.outputs.number }}" --repo "$GITHUB_REPOSITORY" --add-label fix-me

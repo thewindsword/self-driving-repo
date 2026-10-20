@@ -1,0 +1,39 @@
+# 第 2 层 · 被动维护 —— Dependabot PR 的分级自动合并。
+#
+# 策略（README「分级合并策略」）：
+#   patch → 自动批准 + CI 绿后全自动 squash 合并
+#           （分支保护要求 1 个 approving review，故 patch 也先批准）
+#   minor → 只自动批准，合并按钮留给人
+#   major → 全人工，本 workflow 不动作
+#
+# 注意：GITHUB_TOKEN 批准 PR 需要开启仓库设置
+# 「Allow GitHub Actions to create and approve pull requests」（启用清单第 3 步）。
+name: Dependabot Auto Merge
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  merge:
+    if: github.actor == 'dependabot[bot]' || github.actor == 'dependabot-preview[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PR: ${{ github.event.pull_request.number }}
+    steps:
+      - name: patch 级 → 全自动合并
+        if: contains(github.event.pull_request.labels.*.name, 'patch')
+        run: |
+          gh pr review "$PR" --approve --body "patch 级依赖更新：自动批准，CI 绿后自动合并。"
+          gh pr merge "$PR" --auto --squash --delete-branch
+
+      - name: minor 级 → 自动批准，人工点合并
+        if: ${{ !contains(github.event.pull_request.labels.*.name, 'patch') && contains(github.event.pull_request.labels.*.name, 'minor') }}
+        run: |
+          gh pr review "$PR" --approve --body "minor 级依赖更新：已自动批准，确认 CI 绿后请人工合并。"

@@ -1,0 +1,24 @@
+{
+  "name": "self-driving-repo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "自维护仓库模板：触发器（issue / PR / CI 失败 / 定时）→ 代理改代码 → CI 验证 → 分级合并",
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.13.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.72.0",
+    "vitest": "^5.0.5"
+  }
+}

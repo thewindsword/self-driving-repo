@@ -1,0 +1,24 @@
+# 第 2 层 · 被动维护 —— 依赖与 GitHub Actions 版本周更。
+# 分级合并策略由 dependabot-auto-merge.yml 按 semver 标签（patch/minor/major）执行。
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: chore(deps)
+    labels:
+      - dependencies
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: chore(ci)
+    labels:
+      - dependencies

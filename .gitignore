@@ -1,0 +1,15 @@
+# 系统文件
+.DS_Store
+
+# 依赖与构建产物
+node_modules/
+dist/
+coverage/
+
+# 本地环境与日志（红线：禁止提交密钥类文件）
+.env
+.env.*
+*.log
+
+# Claude Code 本地会话配置
+.claude/settings.local.json

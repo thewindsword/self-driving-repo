@@ -1,0 +1,81 @@
+# 第 3 层 · 代理开发 —— 全仓库唯一的代理执行入口。
+#
+# 三类触发：
+#   1. issue 打 fix-me 标签       → 代理实现该 issue，从 claude/ 分支开 PR
+#   2. issue/PR 评论 @claude      → 代理响应评论（在 PR 上可直接推提交到源分支）
+#   3. workflow_dispatch 带指令    → 机器/手动入口（自愈评论以外的定制任务）
+#
+# 架构约定（README「五层架构」）：自愈、巡检不直接跑代理，
+# 而是发评论/建 issue 唤起本 workflow —— 日后换代理只改这一个文件。
+name: Claude Agent
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      instruction:
+        description: 任务指令（可引用编号，如「修复 #12 描述的问题」）
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write # Claude GitHub App 认证路径所需
+  actions: read # 允许代理读取 CI 结果
+
+jobs:
+  agent:
+    # fix-me 标签需要仓库写权限才能打，天然挡住外部注入；
+    # @claude 评论触发同样要求评论者具备写权限（action 内置访问控制）
+    if: |
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
+      (github.event_name == 'issues' && github.event.label.name == 'fix-me') ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: 运行 Claude Code
+        uses: anthropics/claude-code-action@v1
+        with:
+          # —— 模型认证（三选一，详见 README「配置密钥」）——
+          # A. Anthropic 官方 API：
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # B. Claude 订阅（Pro/Max 用户本地执行 `claude setup-token` 生成）：
+          # claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # C. 第三方 Anthropic 兼容端点（GLM / Kimi / DeepSeek 等）：
+          #    注释掉 A 行，配置 Secrets LLM_BASE_URL / LLM_API_KEY，再放开下述 settings：
+          # settings: |
+          #   {
+          #     "env": {
+          #       "ANTHROPIC_BASE_URL": "${{ secrets.LLM_BASE_URL }}",
+          #       "ANTHROPIC_AUTH_TOKEN": "${{ secrets.LLM_API_KEY }}"
+          #     }
+          #   }
+
+          # GitHub 身份：用 PAT 让代理以你的身份开 PR —— GITHUB_TOKEN 开的 PR
+          # 不会触发 CI，「CI 绿才合并」的分级策略会卡死。没配 PAT 时自动退回
+          # GITHUB_TOKEN，交互功能仍可用，仅代理 PR 缺 CI。
+          github_token: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
+
+          label_trigger: fix-me
+
+          # 机器入口（workflow_dispatch）的任务指令；交互触发时为空，
+          # action 自动进入对话/issue 实现模式
+          prompt: ${{ github.event.inputs.instruction }}
+
+          # 成本护栏：单次任务最大轮次（简单任务可调低，见 README「进阶」）
+          claude_args: --max-turns 50

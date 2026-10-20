@@ -1,0 +1,39 @@
+# 第 1 层 · 地基 —— CI 门禁。
+#
+# 分支保护要求的必需状态检查 context 是 job 名「verify」（README「启用清单」第 4 步）。
+# 换技术栈时只需替换下方 pnpm 的安装与验证步骤，并同步更新 AGENTS.md 第 3 节。
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 本地验证三件套（与 AGENTS.md 第 3 节保持一致）
+        run: |
+          pnpm lint
+          pnpm typecheck
+          pnpm test
+
+      - name: 构建
+        run: pnpm build

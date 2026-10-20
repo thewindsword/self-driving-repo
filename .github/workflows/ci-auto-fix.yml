@@ -1,0 +1,86 @@
+# 第 4 层 · 自愈 CI —— CI 失败后自动呼叫代理修复。
+#
+# 设计（README「五层架构」）：本 workflow 不直接跑代理，
+# 而是在失败的 PR 上以 PAT 发布 @claude 评论唤起 Claude Agent。
+#
+# 防循环三重护栏：
+#   1. 跳过 claude/ 前缀分支 —— 代理自己 PR 的 CI 失败不再呼叫代理（防死循环）
+#   2. 跳过 dependabot/ 分支 —— 依赖 PR 失败交人工/合并策略处理
+#   3. 熔断 —— 同一 PR 自动呼叫满 3 次后转人工（打 needs-human 标签）
+name: CI Auto Fix
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  call-agent:
+    if: >
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      BRANCH: ${{ github.event.workflow_run.head_branch }}
+      SHA: ${{ github.event.workflow_run.head_sha }}
+      PAT: ${{ secrets.PAT_TOKEN }}
+      GH_TOKEN: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
+    steps:
+      - name: 防循环与前置检查
+        id: guard
+        run: |
+          set -euo pipefail
+          if [[ "$BRANCH" == claude/* ]]; then
+            echo "reason=claude 分支的 CI 失败不再呼叫代理（防死循环）" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$BRANCH" == dependabot/* ]]; then
+            echo "reason=dependabot 分支失败交由人工/合并策略处理" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ -z "$PAT" ]]; then
+            echo "::error title=缺少 PAT_TOKEN::GITHUB_TOKEN 发的评论不会触发 Claude Agent workflow，自愈链路不通。配置方法见 README「关于 PAT」。"
+            exit 1
+          fi
+
+      - name: 定位失败的 PR
+        id: pr
+        if: steps.guard.outputs.reason == ''
+        run: |
+          set -euo pipefail
+          PR=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [[ -z "$PR" ]]; then
+            echo "reason=分支 $BRANCH 没有关联的 open PR，跳过" >> "$GITHUB_OUTPUT"
+          else
+            echo "number=$PR" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 熔断检查（同一 PR 最多自动呼叫 3 次）
+        id: breaker
+        if: steps.pr.outputs.number != ''
+        run: |
+          set -euo pipefail
+          COUNT=$(gh api "repos/$GITHUB_REPOSITORY/issues/${{ steps.pr.outputs.number }}/comments" \
+            --jq '[.[] | select(.body | contains("ci-auto-fix"))] | length')
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          if (( COUNT >= 3 )); then
+            echo "tripped=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 呼叫 Claude 修复
+        if: steps.pr.outputs.number != '' && steps.breaker.outputs.tripped != 'true'
+        run: |
+          gh pr comment "${{ steps.pr.outputs.number }}" --repo "$GITHUB_REPOSITORY" --body \
+            "@claude 这个 PR 的 CI 失败了（commit \`${SHA:0:8}\`，日志见该 commit 的 CI run）。请定位原因并按 AGENTS.md 规范修复，确保 \`pnpm lint && pnpm typecheck && pnpm test\` 全绿后再提交。(ci-auto-fix ${{ steps.breaker.outputs.count }})"
+
+      - name: 熔断转人工
+        if: steps.breaker.outputs.tripped == 'true'
+        run: |
+          gh pr comment "${{ steps.pr.outputs.number }}" --repo "$GITHUB_REPOSITORY" --body \
+            "⚠️ 该 PR 的 CI 自动修复已达 3 次上限，转人工处理。(ci-auto-fix)"
+          gh pr edit "${{ steps.pr.outputs.number }}" --repo "$GITHUB_REPOSITORY" --add-label needs-human || true
