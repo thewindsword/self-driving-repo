@@ -9,3 +9,8 @@
 export function sum(a: number, b: number): number {
   return a + b
 }
+
+/** 两数相乘。 */
+export function multiply(a: number, b: number): number {
+  return a * b
+}
