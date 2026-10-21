@@ -5,13 +5,16 @@
 
 本版代理层使用 [claude-code-action](https://github.com/anthropics/claude-code-action)
 （官方维护的 GitHub Action，完全跑在你自己的 runner 上）。
-模型三选一：Anthropic 官方 API、Claude 订阅（Pro/Max）、
-或任何 **Anthropic 兼容端点**——GLM、Kimi、DeepSeek 等均可，不锁定单一厂商。
+模型默认走 **Anthropic 兼容端点注册表**（DeepSeek / GLM / Kimi / 自建网关，
+见「模型端点」一节），也可换 Anthropic 官方 API 或 Claude 订阅。
 
 > 模板自带一个最小示例项目（pnpm + TypeScript + vitest + eslint），
 > 让 CI 门禁与自愈链路**开箱可验证**；接入真实项目时整体替换 `src/` 即可。
+>
+> **想在已有项目上接入这套核心逻辑？** 精简迁移路径、最小文件清单与
+> 踩坑速查表见 **[TUTORIAL.md](./TUTORIAL.md)**。
 
-## 五层架构与文件对应
+## 七层架构与文件对应
 
 | 层 | 能力 | 文件 |
 |---|---|---|
@@ -19,12 +22,13 @@
 | 2. 被动维护 | 依赖/Action 自动升级，patch 级自动合并 | `dependabot.yml`、`dependabot-auto-merge.yml` |
 | 3. 代理开发 | `fix-me` 标签 / `@claude` 交互 + 每周巡检 | `claude-agent.yml`、`weekly-maintenance.yml` |
 | 4. 自愈 CI | CI 失败自动呼叫代理修复（防循环 + 熔断） | `ci-auto-fix.yml` |
-| 5. 护栏 | 分支保护、CODEOWNERS 强制人工兜底 | `CODEOWNERS` + 下方启用清单 |
+| 5. 护栏 | 分支保护 + 工具白名单 + CODEOWNERS | `CODEOWNERS` + 下方启用清单 |
 | 6. 成本治理 | 峰谷窗口 + 分触发策略 + 日预算 + 谷时排队 | `ai-policy.yml`、`ai-gate.yml`、`ai-dispatcher.yml` |
+| 7. 模型运维 | 多厂商端点注册表 + 实时模型列表与切换 | `ai-providers.yml`、`model-ops.yml` |
 | 可选 | AI PR 审查（review-this 标签） | `pr-review.yml` |
 
 **架构特点：所有代理入口收敛到 `claude-agent.yml` 一处。** 自愈和巡检不直接跑代理，
-而是发评论/建 issue 唤起代理——触发逻辑（第 2、4 层）与代理执行（第 3 层）解耦，
+而是发评论/建 issue 唤起代理——触发逻辑与代理执行解耦，
 日后换代理实现（OpenHands、Codex、自研 SDK……）只改这一个文件。
 
 ## 启用清单（按顺序执行，约 30 分钟）
@@ -42,10 +46,10 @@ gh repo create <repo-name> --private --source=. --push
 
 | Secret | 必填 | 说明 |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | 三选一 | Anthropic 官方 API key |
-| `CLAUDE_CODE_OAUTH_TOKEN` | 三选一 | Claude 订阅（Pro/Max 本地执行 `claude setup-token` 生成） |
-| `LLM_API_KEY` | 三选一 | 当前 `active` 厂商（见 `.github/ai-providers.yml`，默认 deepseek）的 API key；换厂商时同步换 key |
-| `PAT_TOKEN` | 强烈建议 | 个人访问令牌（contents / issues / pull requests 读写），见下方「关于 PAT」 |
+| `LLM_API_KEY` | ✅ | 当前 `active` 厂商（`.github/ai-providers.yml`，默认 DeepSeek）的 API key；换厂商时同步换 key |
+| `PAT_TOKEN` | ✅ | 细粒度 PAT（仅本仓库；Contents / Issues / Pull requests 全 Read & write）——三条触发链路的命脉，见下方「关于 PAT」 |
+
+（改用 Anthropic 官方 API 或 Claude 订阅：见 `claude-agent.yml` 内注释的 A/B 方案。）
 
 ### 4. 打开三个开关（Settings）
 - General → Pull Requests → ✅ **Allow auto-merge**
@@ -53,32 +57,28 @@ gh repo create <repo-name> --private --source=. --push
 - Code security → ✅ 启用 Dependabot alerts / security updates
 
 ### 5. 设置分支保护（main）
-```bash
-gh api repos/{owner}/{repo}/branches/main/protection -X PUT \
-  -f required_status_checks='{"strict":true,"contexts":["verify"]}' \
-  -f enforce_admins=true \
-  -f required_pull_request_reviews='{"required_approving_review_count":1}' \
-  -f restrictions=null
-```
-（`verify` 是 `ci.yml` 的 job 名。建议同时在 UI 勾选
-**Require review from code owners**，让 `CODEOWNERS` 生效。）
+**单人仓库必须选 0 批准**（GitHub 禁止作者自批，1 批准 = 自己开的 PR 死锁；
+人工闸门由「CI 硬门槛 + 你的合并按钮」承担）。完整命令、团队形态取舍与原理
+见 TUTORIAL.md §3④。
 
 ### 6. 替换占位内容
 - `CODEOWNERS` 里的 `@your-github-username` → 你的用户名/团队
-- 真实项目：替换 `src/` 与 `package.json`，并同步更新 `AGENTS.md` 第 3 节和 `ci.yml` 的命令
-  （**这步直接决定代理产出质量**——代理上岗只读 `AGENTS.md`）
+- 真实项目：替换 `src/` 与 `package.json`，并同步更新 `AGENTS.md` 第 3 节和 `ci.yml` 的命令（详见 TUTORIAL §2 的「三个同步点」）
 
-## 关于 PAT（为什么强烈建议）
+## 关于 PAT（必配——三条链路的命脉）
 
 GitHub 有递归保护：**GITHUB_TOKEN 产生的动作不会触发新的 workflow**。这会断掉三条链路：
 
 1. 代理用 GITHUB_TOKEN 开的 PR → CI 不会自动跑 → 「CI 绿才合并」卡死
 2. 自愈用 GITHUB_TOKEN 发的 `@claude` 评论 → 唤不醒代理
-3. 巡检用 GITHUB_TOKEN 建的 issue → 打了 fix-me 也没反应
+3. 巡检/谷时调度器用 GITHUB_TOKEN 建 issue、换标签 → 唤不醒代理
 
-配置 `PAT_TOKEN`（权限：contents / issues / pull requests 读写）后，
-以上环节都以你的身份行动，链路全通。没配 PAT 时模板会快速失败并给出明确提示，
+配置 `PAT_TOKEN`（细粒度：仅本仓库，Contents / Issues / Pull requests 全 Read & write）后，
+以上环节都以你的身份行动，链路全通。没配 PAT 时相关 workflow 会**快速失败并给出明确提示**，
 而不是静默半残。
+
+运维提醒：PAT 默认 90 天过期——**日历加到期提醒**，届时重新生成并更新 Secret，
+过期表现为三条链路同时静默断掉。
 
 ## 验证各环节（每项 5 分钟）
 
@@ -92,6 +92,10 @@ GitHub 有递归保护：**GITHUB_TOKEN 产生的动作不会触发新的 workfl
 | PR 审查 | 给任意 PR 打 `review-this` 标签 | 收到分级行内审查评论（🔴🟡🔵） |
 | 成本排队 | 峰时（如工作日白天）建 issue 打 `fix-me` | 被换成 `ai-queue` + 排队评论；等谷时或手动触发 AI Dispatcher 后自动处理 |
 
+> 已知边界：① 代理推送的修复提交，其 CI run 偶发被标 `action_required` 需人工
+> 批准（Actions 页「Approve run」或 `gh api repos/<repo>/actions/runs/<id>/approve -X POST`）；
+> ② 测试日代理跑多了会触发每日预算 deny——这是成本治理在工作，次日自动恢复。
+
 ## 分级合并策略（已内置）
 
 | 改动类型 | 合并方式 | 由谁执行 |
@@ -104,7 +108,11 @@ GitHub 有递归保护：**GITHUB_TOKEN 产生的动作不会触发新的 workfl
 
 ## 安全边界（已内置）
 
-- `main` 受保护（必需状态检查 `verify` + 1 个人工批准），代理无法直推
+- `main` 受保护：必需状态检查 `verify` + 禁直推 + 禁 force push（`enforce_admins`）；
+  人工闸门 = CI 硬门槛 + 你的合并按钮（单人 0 批准形态，理由见启用清单第 5 步）
+- **工具白名单**：代理只能执行白名单内的 Bash（gh 的 issue/PR 创建与只读、
+  git 只读、pnpm 三件套）；`pr merge` / `pr review` / `gh api` / 删除类命令
+  **永远不在白名单**——合并与批准是人的闸门
 - `fix-me` 标签与 `@claude` 评论触发均要求写权限，防外部提示词注入
 - `ci-auto-fix.yml` 三重防循环：跳过 `claude/` 分支、跳过 `dependabot/` 分支、
   同一 PR 自动呼叫满 3 次熔断转人工（`needs-human` 标签）
@@ -115,25 +123,9 @@ GitHub 有递归保护：**GITHUB_TOKEN 产生的动作不会触发新的 workfl
 ## 成本治理：AI 何时允许花钱（第 6 层）
 
 所有消耗 AI 的入口（fix-me / @claude / 自愈 / 审查 / 巡检）先过
-**ai-gate** 再到代理。策略集中在 `.github/ai-policy.yml`，改完即时生效：
-
-```yaml
-timezone: Asia/Shanghai     # 时区
-offpeak_start: "22:00"      # 谷时窗口起点（跨零点写 22:00 / 08:00 即可）
-offpeak_end:   "08:00"
-offpeak_weekend_all_day: true
-
-policy_mention: always      # @claude 交互：有人在等 → 永远放行
-policy_fix_me: offpeak      # issue 实现：非紧急 → 排队到谷时
-policy_ci_autofix: always   # CI 自愈：主干被阻塞 → 立即修
-policy_review: always       # AI 审查
-policy_dispatch: always     # 手动入口
-
-budget_runs_per_day: 20     # 每日运行上限（两入口合计，保守计数）
-max_turns_peak: 50          # 峰时单次轮次上限
-max_turns_offpeak: 80       # 谷时单价低 → 允许跑更久
-dispatch_batch: 3           # 谷时调度器每 30 分钟放行几个排队任务
-```
+**ai-gate** 再到代理。策略集中在 `.github/ai-policy.yml`（含逐项注释，改完即时生效）：
+时区与谷时窗口（支持跨零点、周末全天）、分触发放行（always/offpeak/peak）、
+`budget_runs_per_day` 日预算、峰/谷 `max_turns` 单次轮次、`dispatch_batch` 排队批量。
 
 **运行时行为**：
 
