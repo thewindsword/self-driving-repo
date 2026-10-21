@@ -125,11 +125,12 @@ jobs:
           fi
 
           # —— 每日预算（本地零点起，claude-agent + pr-review 合计；保守计数）——
-          CUTOFF=$(TZ="$TZ_CFG" date -d 'today 00:00' +%s)
+          # cutoff 用 UTC ISO 字符串与 created_at 字典序比较：gh api 不支持 jq 的
+          # --argjson，内嵌 gojq 对正则转义也严格，字符串比较最稳（API 返回无毫秒）
+          CUTOFF=$(TZ="$TZ_CFG" date -d 'today 00:00' --utc +%Y-%m-%dT%H:%M:%SZ)
           count_runs() {
             gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$1/runs?per_page=100" \
-              --argjson cutoff "$CUTOFF" \
-              --jq '[.workflow_runs[] | select((.created_at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) >= $cutoff)] | length'
+              --jq '[.workflow_runs[] | select(.created_at >= "'"$CUTOFF"'")] | length'
           }
           TODAY=$(( $(count_runs claude-agent.yml) + $(count_runs pr-review.yml) ))
           if [[ "$DECISION" == allow ]] && (( TODAY >= BUDGET )); then
