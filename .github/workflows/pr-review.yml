@@ -42,16 +42,16 @@ jobs:
       - name: 运行 Claude 审查
         uses: anthropics/claude-code-action@v1
         with:
-          # 认证 A：Anthropic 官方 API（B/C 方案见 claude-agent.yml 注释，两处需同步改）
-          # anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          # claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # 认证：C · 兼容端点三件套（与 claude-agent.yml 同步维护：
+          # api_key 过启动校验 + BASE_URL 重定向 + AUTH_TOKEN 认证）
+          anthropic_api_key: ${{ secrets.LLM_API_KEY }}
           settings: |
-             {
-               "env": {
-                 "ANTHROPIC_BASE_URL": "${{ secrets.LLM_BASE_URL }}",
-                 "ANTHROPIC_AUTH_TOKEN": "${{ secrets.LLM_API_KEY }}"
-               }
-             }
+            {
+              "env": {
+                "ANTHROPIC_BASE_URL": "${{ secrets.LLM_BASE_URL }}",
+                "ANTHROPIC_AUTH_TOKEN": "${{ secrets.LLM_API_KEY }}"
+              }
+            }
 
           github_token: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
 
