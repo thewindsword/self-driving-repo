@@ -78,6 +78,10 @@ EOF
 
 最后预建标签：`fix-me`、`review-this`、`urgent`（其余 workflow 会自建）。
 
+**⑤（可选）启用每周巡检**：Settings → Secrets and variables → Actions →
+**Variables** → New repository variable → `SELF_DRIVING_MAINTENANCE` = `true`。
+不设则模板完全静默（巡检不随 cron 运行；手动 dispatch 随时可测）。
+
 ## 4. 冒烟三连（按序，每步通过再下一步）
 
 | 步 | 操作 | 通过标准 |
