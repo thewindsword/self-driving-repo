@@ -133,5 +133,9 @@ jobs:
           # action 自动进入对话/issue 实现模式
           prompt: ${{ github.event.inputs.instruction }}
 
-          # 成本护栏：单次最大轮次由闸门按峰/谷动态给出（ai-policy.yml）
-          claude_args: --max-turns ${{ needs.gate.outputs.max_turns }}
+          # 成本护栏 + 工具白名单：轮次上限由闸门按峰/谷动态给出。
+          # headless 模式下未白名单的 Bash 一律拒绝（此前 18 次拒绝即因缺白名单）。
+          # 刻意不含 pr merge/approve、gh api、删除类命令——合并与批准是人的闸门。
+          claude_args: >-
+            --max-turns ${{ needs.gate.outputs.max_turns }}
+            --allowedTools "Bash(gh issue create:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh issue comment:*),Bash(gh issue edit:*),Bash(gh issue close:*),Bash(gh issue reopen:*),Bash(gh issue label:*),Bash(gh pr create:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr edit:*),Bash(gh pr close:*),Bash(gh label create:*),Bash(gh label list:*)"
