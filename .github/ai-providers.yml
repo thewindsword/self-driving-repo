@@ -21,8 +21,8 @@ active: deepseek
 # DeepSeek（Anthropic 兼容端点）
 deepseek_base_url: https://api.deepseek.com/anthropic
 deepseek_models_api: https://api.deepseek.com/models
-deepseek_model: deepseek-chat
-deepseek_small_model: deepseek-chat
+deepseek_model: deepseek-v4-pro
+deepseek_small_model: deepseek-v4-pro
 
 # 智谱 GLM
 glm_base_url: https://open.bigmodel.cn/api/anthropic
