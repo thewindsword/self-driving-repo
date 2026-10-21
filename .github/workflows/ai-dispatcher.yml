@@ -53,11 +53,11 @@ jobs:
           fi
           [[ "${OK:-0}" == 1 ]] || { echo "::notice::当前不是谷时窗口，本次不排发"; exit 0; }
 
-          CUTOFF=$(TZ="$TZ_CFG" date -d 'today 00:00' +%s)
+          # cutoff 用 UTC ISO 字符串与 created_at 字典序比较（同 ai-gate.yml 的修复）
+          CUTOFF=$(TZ="$TZ_CFG" date -d 'today 00:00' --utc +%Y-%m-%dT%H:%M:%SZ)
           count_runs() {
             gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$1/runs?per_page=100" \
-              --argjson cutoff "$CUTOFF" \
-              --jq '[.workflow_runs[] | select((.created_at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) >= $cutoff)] | length'
+              --jq '[.workflow_runs[] | select(.created_at >= "'"$CUTOFF"'")] | length'
           }
           TODAY=$(( $(count_runs claude-agent.yml) + $(count_runs pr-review.yml) ))
           REMAIN=$(( BUDGET - TODAY ))
