@@ -12,7 +12,10 @@
 > 让 CI 门禁与自愈链路**开箱可验证**；接入真实项目时整体替换 `src/` 即可。
 >
 > **想在已有项目上接入这套核心逻辑？** 精简迁移路径、最小文件清单与
-> 踩坑速查表见 **[TUTORIAL.md](./TUTORIAL.md)**。
+> 踩坑速查表见 **[TUTORIAL.md](./TUTORIAL.md)**；
+> 也可复制 **`.claude/skills/adopt-self-driving/`** 到目标项目的
+> `.claude/skills/` 下，让 Claude Code 等 agent 按 Skill 自动执行整个接入流程
+> （Skill 只含流程，文件始终从本仓库 main 实时拉取，不产生模板漂移）。
 
 ## 七层架构与文件对应
 
