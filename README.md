@@ -44,7 +44,7 @@ gh repo create <repo-name> --private --source=. --push
 |---|---|---|
 | `ANTHROPIC_API_KEY` | 三选一 | Anthropic 官方 API key |
 | `CLAUDE_CODE_OAUTH_TOKEN` | 三选一 | Claude 订阅（Pro/Max 本地执行 `claude setup-token` 生成） |
-| `LLM_BASE_URL` + `LLM_API_KEY` | 三选一 | 第三方 Anthropic 兼容端点（GLM/Kimi/DeepSeek 等）；配好后按 `claude-agent.yml` 注释切到 `settings` 方式 |
+| `LLM_BASE_URL` + `LLM_API_KEY` | 三选一 | 第三方 Anthropic 兼容端点（GLM/Kimi/DeepSeek 等）；workflow 已按「三件套」预配好，配好 Secret 即用 |
 | `PAT_TOKEN` | 强烈建议 | 个人访问令牌（contents / issues / pull requests 读写），见下方「关于 PAT」 |
 
 ### 4. 打开三个开关（Settings）

@@ -89,20 +89,24 @@ jobs:
       - name: 运行 Claude Code
         uses: anthropics/claude-code-action@v1
         with:
-          # —— 模型认证（三选一，详见 README「配置密钥」）——
-          # A. Anthropic 官方 API：
-          # anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          # B. Claude 订阅（Pro/Max 用户本地执行 `claude setup-token` 生成）：
-          # claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          # C. 第三方 Anthropic 兼容端点（GLM / Kimi / DeepSeek 等）：
-          #    注释掉 A 行，配置 Secrets LLM_BASE_URL / LLM_API_KEY，再放开下述 settings：
+          # —— 模型认证（当前：C · 第三方 Anthropic 兼容端点，三件套缺一不可）——
+          # anthropic_api_key   满足 action 启动校验（值即端点密钥，兼作凭据）
+          # ANTHROPIC_BASE_URL  请求重定向到兼容端点
+          # ANTHROPIC_AUTH_TOKEN Bearer 认证（CLI 中优先于 api_key）
+          anthropic_api_key: ${{ secrets.LLM_API_KEY }}
           settings: |
             {
               "env": {
-                 "ANTHROPIC_BASE_URL": "${{ secrets.LLM_BASE_URL }}",
-                 "ANTHROPIC_AUTH_TOKEN": "${{ secrets.LLM_API_KEY }}"
+                "ANTHROPIC_BASE_URL": "${{ secrets.LLM_BASE_URL }}",
+                "ANTHROPIC_AUTH_TOKEN": "${{ secrets.LLM_API_KEY }}"
               }
             }
+          # 若端点不认 claude 系模型名：Settings → Variables 配 LLM_MODEL（如 glm-4.6），
+          # 并给上面 env 加一行 "ANTHROPIC_MODEL": "${{ vars.LLM_MODEL }}"
+          #
+          # 换认证方式时删除上面整段，改用：
+          # A. Anthropic 官方 API：anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # B. 订阅（Pro/Max 本地 `claude setup-token`）：claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
           # GitHub 身份：用 PAT 让代理以你的身份开 PR —— GITHUB_TOKEN 开的 PR
           # 不会触发 CI，「CI 绿才合并」的分级策略会卡死。没配 PAT 时自动退回
