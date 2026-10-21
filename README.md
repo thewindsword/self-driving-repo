@@ -57,25 +57,13 @@ gh repo create <repo-name> --private --source=. --push
 - Code security → ✅ 启用 Dependabot alerts / security updates
 
 ### 5. 设置分支保护（main）
-
-先选形态——**单人仓库必须选 0 批准**：GitHub 禁止 PR 作者批准自己的 PR，
-单人 + 1 批准 = 你自己开的 PR 永远死锁；单人形态下人工闸门 = CI 硬门槛 + 你的合并按钮。
-
-```bash
-# 单人形态（推荐起步）：0 批准，verify 为硬门槛，禁直推/禁 force push
-gh api repos/{owner}/{repo}/branches/main/protection -X PUT --input - <<'EOF'
-{"required_status_checks":{"strict":true,"contexts":["verify"]},"enforce_admins":true,"required_pull_request_reviews":{"required_approving_review_count":0,"require_code_owner_reviews":false},"restrictions":null,"allow_force_pushes":false,"allow_deletions":false}
-EOF
-```
-
-团队形态：把 `required_approving_review_count` 改为 `1` 并在 UI 勾选
-**Require review from code owners**（让 `CODEOWNERS` 生效）——但注意用 PAT 的代理
-PR 会以你署名，同样受自批限制。
+**单人仓库必须选 0 批准**（GitHub 禁止作者自批，1 批准 = 自己开的 PR 死锁；
+人工闸门由「CI 硬门槛 + 你的合并按钮」承担）。完整命令、团队形态取舍与原理
+见 TUTORIAL.md §3④。
 
 ### 6. 替换占位内容
 - `CODEOWNERS` 里的 `@your-github-username` → 你的用户名/团队
-- 真实项目：替换 `src/` 与 `package.json`，并同步更新 `AGENTS.md` 第 3 节和 `ci.yml` 的命令
-  （**这步直接决定代理产出质量**——代理上岗只读 `AGENTS.md`）
+- 真实项目：替换 `src/` 与 `package.json`，并同步更新 `AGENTS.md` 第 3 节和 `ci.yml` 的命令（详见 TUTORIAL §2 的「三个同步点」）
 
 ## 关于 PAT（必配——三条链路的命脉）
 
@@ -135,25 +123,9 @@ GitHub 有递归保护：**GITHUB_TOKEN 产生的动作不会触发新的 workfl
 ## 成本治理：AI 何时允许花钱（第 6 层）
 
 所有消耗 AI 的入口（fix-me / @claude / 自愈 / 审查 / 巡检）先过
-**ai-gate** 再到代理。策略集中在 `.github/ai-policy.yml`，改完即时生效：
-
-```yaml
-timezone: Asia/Shanghai     # 时区
-offpeak_start: "22:00"      # 谷时窗口起点（跨零点写 22:00 / 08:00 即可）
-offpeak_end:   "08:00"
-offpeak_weekend_all_day: true
-
-policy_mention: always      # @claude 交互：有人在等 → 永远放行
-policy_fix_me: offpeak      # issue 实现：非紧急 → 排队到谷时
-policy_ci_autofix: always   # CI 自愈：主干被阻塞 → 立即修
-policy_review: always       # AI 审查
-policy_dispatch: always     # 手动入口
-
-budget_runs_per_day: 20     # 每日运行上限（两入口合计，保守计数）
-max_turns_peak: 50          # 峰时单次轮次上限
-max_turns_offpeak: 80       # 谷时单价低 → 允许跑更久
-dispatch_batch: 3           # 谷时调度器每 30 分钟放行几个排队任务
-```
+**ai-gate** 再到代理。策略集中在 `.github/ai-policy.yml`（含逐项注释，改完即时生效）：
+时区与谷时窗口（支持跨零点、周末全天）、分触发放行（always/offpeak/peak）、
+`budget_runs_per_day` 日预算、峰/谷 `max_turns` 单次轮次、`dispatch_batch` 排队批量。
 
 **运行时行为**：
 
