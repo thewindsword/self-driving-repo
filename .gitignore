@@ -13,3 +13,6 @@ coverage/
 
 # Claude Code 本地会话配置
 .claude/settings.local.json
+
+# IDE
+.idea/

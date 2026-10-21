@@ -1,0 +1,181 @@
+# 成本治理 · 可复用闸门 —— 所有消耗 AI 的入口（claude-agent / pr-review）先过这里。
+#
+# 决策逻辑（单一事实来源 .github/ai-policy.yml）：
+#   1. 按触发类型查策略：always / offpeak / peak
+#   2. 峰谷判定（时区 + 跨零点窗口 + 周末规则）
+#   3. urgent 标签直通（人工兜底插队）
+#   4. 每日预算检查（超支 → deny）
+#
+# 决策结果：
+#   allow  → 放行，输出本窗口的 max_turns 给调用方
+#   defer  → 排队：fix_me/review 自动换成排队标签（ai-queue / ai-queue-review），
+#            由 ai-dispatcher.yml 在谷时批量唤醒；mention 类无排队语义，直接评论解释
+#   deny   → 拒绝并评论原因（预算耗尽等）
+#
+# 排队/评论用 GITHUB_TOKEN 即可（排队态是被动的，不需要触发新 workflow）。
+name: AI Gate
+
+on:
+  workflow_call:
+    inputs:
+      trigger:
+        description: 'mention | fix_me | ci_autofix | review | dispatch'
+        required: true
+        type: string
+      urgent:
+        description: 目标是否带 urgent 标签（直通放行）
+        required: false
+        default: false
+        type: boolean
+      target_kind:
+        description: 'issue | pr | none（deny/defer 时定位评论目标）'
+        required: false
+        default: none
+        type: string
+      target_number:
+        description: issue / PR 编号
+        required: false
+        default: '0'
+        type: string
+    outputs:
+      decision:
+        description: 'allow | defer | deny'
+        value: ${{ jobs.gate.outputs.decision }}
+      reason:
+        description: 决策原因（供日志与评论）
+        value: ${{ jobs.gate.outputs.reason }}
+      max_turns:
+        description: 本窗口允许的单次最大轮次
+        value: ${{ jobs.gate.outputs.max_turns }}
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+  actions: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      decision: ${{ steps.decide.outputs.decision }}
+      reason: ${{ steps.decide.outputs.reason }}
+      max_turns: ${{ steps.decide.outputs.max_turns }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TRIGGER: ${{ inputs.trigger }}
+      URGENT: ${{ inputs.urgent }}
+      KIND: ${{ inputs.target_kind }}
+      NUMBER: ${{ inputs.target_number }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: 解析策略并决策
+        id: decide
+        run: |
+          set -euo pipefail
+          # 扁平解析 ai-policy.yml（key: value，值后允许 # 注释）
+          p() { grep -E "^$1:" .github/ai-policy.yml | head -1 | cut -d':' -f2- | awk -F'#' '{print $1}' | tr -d ' "'; }
+
+          TZ_CFG=$(p timezone)
+          OS=$(p offpeak_start)
+          OE=$(p offpeak_end)
+          S=$((10#${OS//:})) # 强制十进制：bash 会把 0800 这类前导零当八进制
+          E=$((10#${OE//:}))
+          WEEKEND_ALL=$(p offpeak_weekend_all_day)
+          POLICY=$(p "policy_${TRIGGER}")
+          BUDGET=$(p budget_runs_per_day)
+          MAX_TURNS_PEAK=$(p max_turns_peak)
+          MAX_TURNS_OFFPEAK=$(p max_turns_offpeak)
+
+          # —— 峰谷判定（支持跨零点窗口：start > end）——
+          NOW=$((10#$(TZ="$TZ_CFG" date +%H%M)))
+          DOW=$(TZ="$TZ_CFG" date +%u) # 1-7，6=周六 7=周日
+          if [[ "$WEEKEND_ALL" == true && "$DOW" -ge 6 ]]; then
+            IS_OFFPEAK=1
+          elif (( S <= E )); then
+            (( NOW >= S && NOW < E )) && IS_OFFPEAK=1 || true
+          else
+            (( NOW >= S || NOW < E )) && IS_OFFPEAK=1 || true
+          fi
+          if [[ "${IS_OFFPEAK:-0}" == 1 ]]; then
+            WINDOW=offpeak; MAX_TURNS=$MAX_TURNS_OFFPEAK
+          else
+            WINDOW=peak; MAX_TURNS=$MAX_TURNS_PEAK
+          fi
+
+          # —— 窗口策略 ——
+          case "$POLICY" in
+            always)
+              DECISION=allow; REASON="policy_${TRIGGER}=always" ;;
+            offpeak)
+              if [[ "$WINDOW" == offpeak ]]; then DECISION=allow; REASON="谷时（${OS}–${OE}）"
+              else DECISION=defer; REASON="policy_${TRIGGER}=offpeak，当前为峰时"; fi ;;
+            peak)
+              if [[ "$WINDOW" == peak ]]; then DECISION=allow; REASON="峰时窗口"
+              else DECISION=defer; REASON="policy_${TRIGGER}=peak，当前为谷时"; fi ;;
+            *)
+              DECISION=allow; REASON="未知策略 ${POLICY}，默认放行（请检查 ai-policy.yml）" ;;
+          esac
+
+          # —— urgent 直通 ——
+          if [[ "$URGENT" == true && "$DECISION" != allow ]]; then
+            DECISION=allow; REASON="urgent 标签直通（原判定：${REASON}）"
+          fi
+
+          # —— 每日预算（本地零点起，claude-agent + pr-review 合计；保守计数）——
+          CUTOFF=$(TZ="$TZ_CFG" date -d 'today 00:00' +%s)
+          count_runs() {
+            gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$1/runs?per_page=100" \
+              --argjson cutoff "$CUTOFF" \
+              --jq '[.workflow_runs[] | select((.created_at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) >= $cutoff)] | length'
+          }
+          TODAY=$(( $(count_runs claude-agent.yml) + $(count_runs pr-review.yml) ))
+          if [[ "$DECISION" == allow ]] && (( TODAY >= BUDGET )); then
+            DECISION=deny; REASON="今日 AI 运行数 $TODAY 已达预算上限 $BUDGET"
+          elif [[ "$DECISION" == allow ]]; then
+            REASON="$REASON · 今日用量 $TODAY/$BUDGET"
+          fi
+
+          echo "decision=$DECISION" >> "$GITHUB_OUTPUT"
+          echo "reason=$REASON" >> "$GITHUB_OUTPUT"
+          echo "max_turns=$MAX_TURNS" >> "$GITHUB_OUTPUT"
+          echo "::notice title=AI Gate::$TRIGGER → $DECISION（$REASON）· window=$WINDOW"
+
+      - name: 执行排队或告知
+        if: steps.decide.outputs.decision != 'allow'
+        env:
+          DECISION: ${{ steps.decide.outputs.decision }}
+          REASON: ${{ steps.decide.outputs.reason }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$NUMBER" =~ ^[0-9]+$ ]] || [[ "$NUMBER" == 0 ]]; then
+            echo "::notice::无可评论/排队的目标（$REASON），到此为止"
+            exit 0
+          fi
+
+          if [[ "$DECISION" == defer && "$TRIGGER" == fix_me ]]; then
+            # issue 实现 → 排队：fix-me 换 ai-queue，谷时由调度器换回
+            gh issue edit "$NUMBER" --repo "$GITHUB_REPOSITORY" --remove-label fix-me --add-label ai-queue \
+              || gh issue edit "$NUMBER" --repo "$GITHUB_REPOSITORY" --add-label ai-queue
+            PARKED=$(gh api "repos/$GITHUB_REPOSITORY/issues/$NUMBER/comments" \
+              --jq '[.[] | select(.body | contains("(ai-queue)"))] | length')
+            if (( PARKED == 0 )); then
+              gh issue comment "$NUMBER" --repo "$GITHUB_REPOSITORY" --body \
+                "🚦 当前不在该触发的允许窗口（$REASON），已排队等待谷时批量处理；加 \`urgent\` 标签可立即插队。详见 \`.github/ai-policy.yml\`。(ai-queue)"
+            fi
+          elif [[ "$DECISION" == defer && "$TRIGGER" == review ]]; then
+            gh pr edit "$NUMBER" --repo "$GITHUB_REPOSITORY" --remove-label review-this --add-label ai-queue-review \
+              || gh pr edit "$NUMBER" --repo "$GITHUB_REPOSITORY" --add-label ai-queue-review
+            gh pr comment "$NUMBER" --repo "$GITHUB_REPOSITORY" --body \
+              "🚦 AI 审查已排队等待谷时处理；加 \`urgent\` 标签可立即插队。详见 \`.github/ai-policy.yml\`。(ai-queue)" || true
+          else
+            # deny（预算耗尽等）或 mention 类 defer → 告知原因
+            BODY="⛔ AI 闸门未放行：$REASON。可在 \`.github/ai-policy.yml\` 调整策略/预算，或加 \`urgent\` 标签后重试。(ai-queue)"
+            if [[ "$KIND" == pr ]]; then
+              gh pr comment "$NUMBER" --repo "$GITHUB_REPOSITORY" --body "$BODY" || true
+            else
+              gh issue comment "$NUMBER" --repo "$GITHUB_REPOSITORY" --body "$BODY" || true
+            fi
+          fi
