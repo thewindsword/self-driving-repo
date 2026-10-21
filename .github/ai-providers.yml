@@ -1,0 +1,43 @@
+# ============================================================
+# 模型端点注册表 —— 多厂商 Anthropic 兼容端点 + 默认模型。
+#
+# 切换厂商/模型的三种方式：
+#   1. Actions → Model Ops → Run workflow
+#      - action=list       实时查询当前厂商的可用模型列表
+#      - action=set-model  设置默认模型（实时校验存在后开 PR）
+#      - action=switch     切换 active 厂商（开 PR + 提醒换 key）
+#   2. 手改本文件（照常走 PR）
+#   3. 换回 Anthropic 官方/订阅：见 claude-agent.yml 内注释
+#
+# 认证约定：Secret LLM_API_KEY 永远填「active 那家」的 key——
+# 换厂商时必须同步换 key（Secret 只能管理员手动更新，workflow 无法代做）。
+#
+# 注意：默认模型名可能滞后于厂商最新发布，用 Model Ops 的 list 实时确认。
+# ============================================================
+
+# 当前生效的厂商（deepseek / glm / kimi / custom）
+active: deepseek
+
+# DeepSeek（Anthropic 兼容端点）
+deepseek_base_url: https://api.deepseek.com/anthropic
+deepseek_models_api: https://api.deepseek.com/models
+deepseek_model: deepseek-chat
+deepseek_small_model: deepseek-chat
+
+# 智谱 GLM
+glm_base_url: https://open.bigmodel.cn/api/anthropic
+glm_models_api: https://open.bigmodel.cn/api/paas/v4/models
+glm_model: glm-4.6
+glm_small_model: glm-4.5-air
+
+# Kimi（月之暗面）
+kimi_base_url: https://api.moonshot.cn/anthropic
+kimi_models_api: https://api.moonshot.cn/v1/models
+kimi_model: kimi-k2-0905-preview
+kimi_small_model: kimi-k2-turbo-preview
+
+# 自建网关 / 其他 Anthropic 兼容端点：填写后即可用 switch 切到 custom
+custom_base_url: ""
+custom_models_api: ""
+custom_model: ""
+custom_small_model: ""

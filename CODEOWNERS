@@ -1,14 +1,14 @@
 # 第 5 层 · 护栏 —— 配合分支保护「Require review from code owners」，
 # 让代理永远改不动自己的「缰绳」。
 #
-# 使用模板时：把 @your-github-username 全部替换为你的用户名或团队。
+# 使用模板时：把 @thewindsword 全部替换为你的用户名或团队。
 
-* @your-github-username
+* @thewindsword
 
 # CI 与代理入口：改这里 = 改自动驾驶仪，永远人工审查
-/.github/ @your-github-username
+/.github/ @thewindsword
 
 # 代理手册与护栏本身
-/AGENTS.md @your-github-username
-/CLAUDE.md @your-github-username
-/CODEOWNERS @your-github-username
+/AGENTS.md @thewindsword
+/CLAUDE.md @thewindsword
+/CODEOWNERS @thewindsword

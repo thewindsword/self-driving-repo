@@ -5,6 +5,9 @@
 #   2. issue/PR 评论 @claude      → 代理响应评论（在 PR 上可直接推提交到源分支）
 #   3. workflow_dispatch 带指令    → 机器/手动入口（自愈评论以外的定制任务）
 #
+# 成本治理：所有触发先过 ai-gate.yml（策略见 .github/ai-policy.yml）——
+# 非谷时/超预算的触发会被排队（ai-queue）或拒绝，谷时由 ai-dispatcher.yml 批量唤醒。
+#
 # 架构约定（README「五层架构」）：自愈、巡检不直接跑代理，
 # 而是发评论/建 issue 唤起本 workflow —— 日后换代理只改这一个文件。
 name: Claude Agent
@@ -29,18 +32,53 @@ permissions:
   pull-requests: write
   issues: write
   id-token: write # Claude GitHub App 认证路径所需
-  actions: read # 允许代理读取 CI 结果
+  actions: read # 允许代理读取 CI 结果 + 闸门读取当日用量
 
+# 触发守卫：只在有明确入口时运行（fix-me 标签需要仓库写权限才能打，
+# 天然挡住外部注入；@claude 评论同样要求写权限，action 内置访问控制）。
+# 注意 job 级 if 不能用 env 上下文，gate/agent 两个 job 各写一份完整条件。
 jobs:
+  gate:
+    if: >-
+      ${{
+        (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+        (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+        (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
+        (github.event_name == 'issues' && github.event.label.name == 'fix-me') ||
+        github.event_name == 'workflow_dispatch'
+      }}
+    uses: ./.github/workflows/ai-gate.yml
+    with:
+      # 事件 → 触发类型：dispatch / fix_me / ci_autofix（自愈评论带标记）/ mention
+      trigger: >-
+        ${{
+          github.event_name == 'workflow_dispatch' && 'dispatch' ||
+          (github.event_name == 'issues' && 'fix_me') ||
+          (contains(github.event.comment.body || github.event.review.body || '', '(ci-auto-fix') && 'ci_autofix') ||
+          'mention'
+        }}
+      # urgent 标签直通闸门（只在 issue 类事件上读取标签，避免空引用）
+      urgent: >-
+        ${{
+          (github.event_name == 'issues' || github.event_name == 'issue_comment' || github.event_name == 'pull_request_review_comment') &&
+          contains(github.event.issue.labels.*.name, 'urgent')
+        }}
+      target_kind: ${{ github.event_name == 'workflow_dispatch' && 'none' || 'issue' }}
+      target_number: ${{ github.event.issue.number || 0 }}
+
   agent:
-    # fix-me 标签需要仓库写权限才能打，天然挡住外部注入；
-    # @claude 评论触发同样要求评论者具备写权限（action 内置访问控制）
-    if: |
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
-      (github.event_name == 'issues' && github.event.label.name == 'fix-me') ||
-      github.event_name == 'workflow_dispatch'
+    needs: gate
+    if: >-
+      ${{
+        needs.gate.outputs.decision == 'allow' &&
+        (
+          (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+          (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+          (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
+          (github.event_name == 'issues' && github.event.label.name == 'fix-me') ||
+          github.event_name == 'workflow_dispatch'
+        )
+      }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -48,23 +86,52 @@ jobs:
         with:
           fetch-depth: 1
 
+      # 代理自验环境：runner 不预装 pnpm，且预装依赖可省代理轮次
+      # （AGENTS.md 第 3 节要求代理提交前跑三件套，环境必须就绪）
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: 预装依赖
+        run: pnpm install --frozen-lockfile
+
+      # 模型端点解析：从 .github/ai-providers.yml 读取 active 厂商的
+      # base_url / model / small_model，注入 CLI 环境变量（效果等同 settings.env，
+      # 但能按厂商动态取值）。换厂商/模型用 Actions → Model Ops，或手改该文件。
+      - name: 解析模型端点
+        env:
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+        run: |
+          set -euo pipefail
+          p() { grep -E "^$1:" .github/ai-providers.yml | head -1 | cut -d':' -f2- | awk -F'#' '{print $1}' | tr -d ' "'; }
+          P=$(p active)
+          BASE=$(p "${P}_base_url")
+          MODEL=$(p "${P}_model")
+          SMALL=$(p "${P}_small_model")
+          echo "ANTHROPIC_BASE_URL=$BASE" >> "$GITHUB_ENV"
+          echo "ANTHROPIC_AUTH_TOKEN=$LLM_API_KEY" >> "$GITHUB_ENV"
+          if [[ -n "$MODEL" ]]; then
+            echo "ANTHROPIC_MODEL=$MODEL" >> "$GITHUB_ENV"
+          fi
+          if [[ -n "$SMALL" ]]; then
+            # 小模型（后台轻量任务用）双写新旧变量名，兼容不同 CLI 版本
+            echo "ANTHROPIC_SMALL_FAST_MODEL=$SMALL" >> "$GITHUB_ENV"
+            echo "ANTHROPIC_DEFAULT_HAIKU_MODEL=$SMALL" >> "$GITHUB_ENV"
+          fi
+          echo "::notice::模型端点 = $P（$BASE · $MODEL）"
+
       - name: 运行 Claude Code
         uses: anthropics/claude-code-action@v1
         with:
-          # —— 模型认证（三选一，详见 README「配置密钥」）——
-          # A. Anthropic 官方 API：
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          # B. Claude 订阅（Pro/Max 用户本地执行 `claude setup-token` 生成）：
-          # claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          # C. 第三方 Anthropic 兼容端点（GLM / Kimi / DeepSeek 等）：
-          #    注释掉 A 行，配置 Secrets LLM_BASE_URL / LLM_API_KEY，再放开下述 settings：
-          # settings: |
-          #   {
-          #     "env": {
-          #       "ANTHROPIC_BASE_URL": "${{ secrets.LLM_BASE_URL }}",
-          #       "ANTHROPIC_AUTH_TOKEN": "${{ secrets.LLM_API_KEY }}"
-          #     }
-          #   }
+          # 认证：api_key 满足 action 启动校验（真实端点/模型/密钥由上面的
+          # 「解析模型端点」步骤按 ai-providers.yml 注入环境变量）。
+          # 换回 Anthropic 官方 API：删除解析步骤，改用
+          #   anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # 换 Claude 订阅（Pro/Max 本地 `claude setup-token`）：
+          #   claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          anthropic_api_key: ${{ secrets.LLM_API_KEY }}
 
           # GitHub 身份：用 PAT 让代理以你的身份开 PR —— GITHUB_TOKEN 开的 PR
           # 不会触发 CI，「CI 绿才合并」的分级策略会卡死。没配 PAT 时自动退回
@@ -77,5 +144,12 @@ jobs:
           # action 自动进入对话/issue 实现模式
           prompt: ${{ github.event.inputs.instruction }}
 
-          # 成本护栏：单次任务最大轮次（简单任务可调低，见 README「进阶」）
-          claude_args: --max-turns 50
+          # 成本护栏 + 工具白名单：轮次上限由闸门按峰/谷动态给出。
+          # headless 模式下未白名单的 Bash 一律拒绝。白名单覆盖：
+          #   - gh issue/PR/label 的创建与只读操作 + repo/run/workflow 只读
+          #   - git 只读（status/diff/log）
+          #   - pnpm 三件套 + install/build（AGENTS.md 第 3 节要求代理自验）
+          # 刻意不含 pr merge/approve、gh api、删除类命令——合并与批准是人的闸门。
+          claude_args: >-
+            --max-turns ${{ needs.gate.outputs.max_turns }}
+            --allowedTools "Bash(gh issue create:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh issue comment:*),Bash(gh issue edit:*),Bash(gh issue close:*),Bash(gh issue reopen:*),Bash(gh issue label:*),Bash(gh pr create:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr edit:*),Bash(gh pr close:*),Bash(gh label create:*),Bash(gh label list:*),Bash(gh repo view:*),Bash(gh run list:*),Bash(gh run view:*),Bash(gh workflow list:*),Bash(gh workflow view:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(pnpm install:*),Bash(pnpm lint:*),Bash(pnpm typecheck:*),Bash(pnpm test:*),Bash(pnpm build:*)"
