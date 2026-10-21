@@ -79,6 +79,12 @@ jobs:
         run: |
           set -euo pipefail
           N="${{ env.allowed }}"
+          # 前置校验未放行（非谷时窗口/预算耗尽）时它以 exit 0 退出但不写 allowed——
+          # 这里必须显式短路，否则 head -n "" 会崩
+          if [[ -z "$N" ]]; then
+            echo "::notice::前置校验未放行，本次不排发"
+            exit 0
+          fi
           echo "本次允许放行：$N"
 
           # 排队 issue：urgent 在前
