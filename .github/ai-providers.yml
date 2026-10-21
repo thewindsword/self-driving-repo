@@ -22,8 +22,8 @@ active: deepseek
 # 2026-10-21 实测切换：/models 实际返回 deepseek-flash 与 deepseek-v4-pro
 deepseek_base_url: https://api.deepseek.com/anthropic
 deepseek_models_api: https://api.deepseek.com/models
-deepseek_model: deepseek-v4-pro
-deepseek_small_model: deepseek-flash # 采纳 AI 审查建议：小模型槽位（后台轻量任务）用轻量款
+deepseek_model: deepseek-flash
+deepseek_small_model: deepseek-flash
 
 # 智谱 GLM
 glm_base_url: https://open.bigmodel.cn/api/anthropic
