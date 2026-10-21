@@ -16,6 +16,10 @@ permissions:
 
 jobs:
   inspect:
+    # 模板仓库默认静默：定时巡检需在 Settings → Secrets and variables → Actions →
+    # Variables 配置 SELF_DRIVING_MAINTENANCE = true 才随 cron 运行；
+    # 手动 workflow_dispatch 不受此限（随时可测）。
+    if: github.event_name == 'workflow_dispatch' || vars.SELF_DRIVING_MAINTENANCE == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
