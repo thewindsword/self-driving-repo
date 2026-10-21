@@ -99,6 +99,8 @@ EOF
 | 代理 PR 不跑 CI / 自愈评论无反应 | 缺 `PAT_TOKEN`（GITHUB_TOKEN 递归保护） | 配 PAT；相关 workflow 本会 fail-fast 提示 |
 | gate 显示 `预算耗尽` | 当日代理运行数达上限 | 次日恢复；或调 `ai-policy.yml` 的 `budget_runs_per_day` |
 | `unknown flag: --argjson` | gh api 不支持 jq 的传参 flag | 用 ISO 字符串比较（模板已内置） |
+| 定时 workflow 从未运行、每次 push 反而失败 | cron 星期字段写了 `7`——GitHub 只认 **0-6**（周日=0），一个非法 cron 让整个文件解析失败 | 写 `6,0`；上线后手动 dispatch 一次即可验证文件可解析 |
+| 审查评论已发出但 run 判负 `exceeding the configured maximum` | 轮次上限过紧（带行内评论的审查实测 16+ 轮） | 调大 `--max-turns`（本模板审查用 25） |
 
 ## 6. 日常工作流（自开发与自维护）
 

@@ -95,6 +95,12 @@ GitHub 有递归保护：**GITHUB_TOKEN 产生的动作不会触发新的 workfl
 > 已知边界：① 代理推送的修复提交，其 CI run 偶发被标 `action_required` 需人工
 > 批准（Actions 页「Approve run」或 `gh api repos/<repo>/actions/runs/<id>/approve -X POST`）；
 > ② 测试日代理跑多了会触发每日预算 deny——这是成本治理在工作，次日自动恢复。
+>
+> **实测记录（2026-10-21，本仓库）**：代理交互（fix-me → PR）、提及交互（@claude，
+> 31 秒完成含推提交）、自愈（两轮完整闭环）、巡检（issue 建立 + 峰时正确排队）、
+> PR 审查（🔴🟡🔵 分级评论）、成本排队（ai-queue 换标签 + 排队评论）、模型运维
+> （list 实时列表 / set-model 校验-开 PR-合并全链）均已真实验证；
+> 自动合并待下一个自然的 Dependabot patch PR 落地时验证。
 
 ## 分级合并策略（已内置）
 
