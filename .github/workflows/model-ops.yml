@@ -1,0 +1,146 @@
+# 模型运维 —— 动态模型列表 + 厂商/模型切换（一律经 PR 生效，不直改 main）。
+#
+#   list       实时查询 active 厂商的模型列表 → 输出到 run summary（供选择）
+#   set-model  设置 active 厂商的默认模型（必须在其实时列表中，否则拒绝）
+#   switch     切换 active 厂商（改文件开 PR；key 需人工同步，见 PR 描述）
+#
+# 密钥只用于查询，绝不打印；输出仅含模型名（公开仓库可见，无敏感信息）。
+# 生成的 PR 用 PAT 推送（未配 PAT 时用 GITHUB_TOKEN，PR 将缺 CI——先配 PAT_TOKEN）。
+name: Model Ops
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'list | switch | set-model'
+        required: true
+        default: list
+      provider:
+        description: '目标厂商（switch 必填：deepseek / glm / kimi / custom；list/set-model 固定操作 active 厂商）'
+        required: false
+        default: ''
+      model:
+        description: '模型名（set-model 必填，先用 list 查看）'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  ops:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
+      KEY: ${{ secrets.LLM_API_KEY }}
+      ACT: ${{ github.event.inputs.action }}
+      P_IN: ${{ github.event.inputs.provider }}
+      M_IN: ${{ github.event.inputs.model }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }} # PAT 推送 → 生成的 PR 能触发 CI
+
+      - name: 读取厂商配置
+        id: cfg
+        run: |
+          set -euo pipefail
+          p() { grep -E "^$1:" .github/ai-providers.yml | head -1 | cut -d':' -f2- | awk -F'#' '{print $1}' | tr -d ' "'; }
+          ACTIVE=$(p active)
+          if [[ "$ACT" == switch ]]; then
+            P="$P_IN"
+            if [[ -z "$P" ]]; then
+              echo "::error::switch 必须填 provider（deepseek / glm / kimi / custom）"
+              exit 1
+            fi
+            if [[ -z "$(p "${P}_base_url")" ]]; then
+              echo "::error::厂商 $P 不存在或未配置 base_url（custom 需先在 ai-providers.yml 填写）"
+              exit 1
+            fi
+          else
+            P="$ACTIVE"
+          fi
+          {
+            echo "active=$ACTIVE"
+            echo "provider=$P"
+            echo "api=$(p "${P}_models_api")"
+            echo "model=$(p "${P}_model")"
+          } >> "$GITHUB_OUTPUT"
+
+      # —— list 与 set-model 共用：拉取实时模型列表 ——
+      - name: 查询实时模型列表
+        id: live
+        if: env.ACT != 'switch'
+        run: |
+          set -euo pipefail
+          API="${{ steps.cfg.outputs.api }}"
+          if [[ -z "$API" ]]; then
+            echo "::error::厂商 ${{ steps.cfg.outputs.provider }} 未配置 models_api"
+            exit 1
+          fi
+          MODELS=$(curl -fsS --max-time 20 "$API" \
+            -H "Authorization: Bearer $KEY" | jq -r '.data[].id' | sort)
+          if [[ -z "$MODELS" ]]; then
+            echo "::error::模型列表为空——key 与 active 厂商不匹配？或接口返回异常"
+            exit 1
+          fi
+          {
+            echo "models<<MODELS_EOF"
+            echo "$MODELS"
+            echo "MODELS_EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "## ${{ steps.cfg.outputs.provider }} 当前可用模型（实时）" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "$MODELS" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: set-model 校验
+        if: env.ACT == 'set-model'
+        run: |
+          set -euo pipefail
+          if [[ -z "$M_IN" ]]; then
+            echo "::error::set-model 必须填 model（先用 action=list 查看）"
+            exit 1
+          fi
+          if ! grep -Fxq "$M_IN" <<< "${{ steps.live.outputs.models }}"; then
+            echo "::error::模型 $M_IN 不在 ${{ steps.cfg.outputs.provider }} 的实时列表中（见 summary）"
+            exit 1
+          fi
+
+      - name: 开 PR 应用变更（set-model / switch）
+        if: env.ACT == 'set-model' || env.ACT == 'switch'
+        run: |
+          set -euo pipefail
+          ACTIVE="${{ steps.cfg.outputs.active }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          BR="claude/model-ops-$(date -u +%H%M%S)"
+          git switch -c "$BR"
+          if [[ "$ACT" == set-model ]]; then
+            WHAT="将 ${ACTIVE} 默认模型设为 ${M_IN}"
+            sed -i "s|^${ACTIVE}_model: .*|${ACTIVE}_model: ${M_IN}|" .github/ai-providers.yml
+            sed -i "s|^${ACTIVE}_small_model: .*|${ACTIVE}_small_model: ${M_IN}|" .github/ai-providers.yml
+            BODY_P="改了什么：\`${ACTIVE}_model\` 与 \`${ACTIVE}_small_model\` → \`${M_IN}\`
+
+          为什么：经 Model Ops（set-model）设置，模型名已在厂商实时列表中校验通过。
+
+          验证：CI verify；Model Ops run summary 附有实时模型列表。"
+          else
+            P="${{ steps.cfg.outputs.provider }}"
+            WHAT="切换 active 厂商 → ${P}"
+            sed -i "s|^active: .*|active: ${P}|" .github/ai-providers.yml
+            BODY_P="改了什么：\`active:\` → \`${P}\`（端点/模型用该厂商预设，可在 ai-providers.yml 调整）
+
+          为什么：经 Model Ops（switch）切换。
+
+          验证：CI verify。
+
+          ⚠️ 合并前/后记得把 Secret \`LLM_API_KEY\` 换成 **${P}** 的 key——
+          Secret 只能管理员手动更新，workflow 无法代做；不换 key 代理将 401。"
+          fi
+          git add .github/ai-providers.yml
+          git commit -m "chore(model): ${WHAT}"
+          git push origin "$BR"
+          gh pr create --repo "$GITHUB_REPOSITORY" --title "[agent] chore(model): ${WHAT}" --body "$BODY_P"

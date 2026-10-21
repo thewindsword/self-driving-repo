@@ -44,7 +44,7 @@ gh repo create <repo-name> --private --source=. --push
 |---|---|---|
 | `ANTHROPIC_API_KEY` | 三选一 | Anthropic 官方 API key |
 | `CLAUDE_CODE_OAUTH_TOKEN` | 三选一 | Claude 订阅（Pro/Max 本地执行 `claude setup-token` 生成） |
-| `LLM_BASE_URL` + `LLM_API_KEY` | 三选一 | 第三方 Anthropic 兼容端点（GLM/Kimi/DeepSeek 等）；workflow 已按「三件套」预配好，配好 Secret 即用 |
+| `LLM_API_KEY` | 三选一 | 当前 `active` 厂商（见 `.github/ai-providers.yml`，默认 deepseek）的 API key；换厂商时同步换 key |
 | `PAT_TOKEN` | 强烈建议 | 个人访问令牌（contents / issues / pull requests 读写），见下方「关于 PAT」 |
 
 ### 4. 打开三个开关（Settings）
@@ -148,6 +148,22 @@ dispatch_batch: 3           # 谷时调度器每 30 分钟放行几个排队任�
 复用同一条 labeled 触发链路——不引入队列服务，成本治理零基础设施。
 
 想完全关掉治理（例如刚开荒想随时测试）：把全部 `policy_*` 改成 `always` 即可。
+
+## 模型端点：多厂商与动态切换
+
+厂商注册表集中在 `.github/ai-providers.yml`（DeepSeek / GLM / Kimi / 自建网关预设，
+含各自的 Anthropic 兼容端点与默认模型）。两个 AI 入口在运行时按 `active` 厂商
+动态注入端点、主模型与小模型环境变量——**换厂商零改代码**。
+
+日常通过 **Model Ops** workflow（Actions → Model Ops → Run workflow）运维：
+
+| action | 做什么 | 说明 |
+|---|---|---|
+| `list` | **实时拉取**当前厂商的可用模型列表 → run summary | 厂商上新模型后先刷新再看，注册表里的默认名可能滞后 |
+| `set-model` | 把当前厂商默认模型设为你选的名字 | 先实时校验该名字确在列表中，再开 PR 应用 |
+| `switch` | 切换 `active` 厂商 | 开 PR 应用；⚠️ 合并后必须手动把 `LLM_API_KEY` 换成新厂商的 key |
+
+所有变更都走 PR + CI（`verify`）生效——连切模型也不直改 main，与仓库其他改动同一套闸门。
 
 ## 进阶（跑顺后再加）
 

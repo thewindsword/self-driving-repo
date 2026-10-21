@@ -39,19 +39,29 @@ jobs:
         with:
           fetch-depth: 1
 
+      # 模型端点解析：与 claude-agent.yml 同步维护（读同一个 ai-providers.yml）
+      - name: 解析模型端点
+        env:
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+        run: |
+          set -euo pipefail
+          p() { grep -E "^$1:" .github/ai-providers.yml | head -1 | cut -d':' -f2- | awk -F'#' '{print $1}' | tr -d ' "'; }
+          P=$(p active)
+          echo "ANTHROPIC_BASE_URL=$(p "${P}_base_url")" >> "$GITHUB_ENV"
+          echo "ANTHROPIC_AUTH_TOKEN=$LLM_API_KEY" >> "$GITHUB_ENV"
+          M=$(p "${P}_model")
+          if [[ -n "$M" ]]; then echo "ANTHROPIC_MODEL=$M" >> "$GITHUB_ENV"; fi
+          S=$(p "${P}_small_model")
+          if [[ -n "$S" ]]; then
+            echo "ANTHROPIC_SMALL_FAST_MODEL=$S" >> "$GITHUB_ENV"
+            echo "ANTHROPIC_DEFAULT_HAIKU_MODEL=$S" >> "$GITHUB_ENV"
+          fi
+
       - name: 运行 Claude 审查
         uses: anthropics/claude-code-action@v1
         with:
-          # 认证：C · 兼容端点三件套（与 claude-agent.yml 同步维护：
-          # api_key 过启动校验 + BASE_URL 重定向 + AUTH_TOKEN 认证）
+          # 认证：api_key 过启动校验；端点/模型由「解析模型端点」注入（同 claude-agent.yml）
           anthropic_api_key: ${{ secrets.LLM_API_KEY }}
-          settings: |
-            {
-              "env": {
-                "ANTHROPIC_BASE_URL": "${{ secrets.LLM_BASE_URL }}",
-                "ANTHROPIC_AUTH_TOKEN": "${{ secrets.LLM_API_KEY }}"
-              }
-            }
 
           github_token: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
 
