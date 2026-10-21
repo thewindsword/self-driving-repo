@@ -14,3 +14,5 @@ export function sum(a: number, b: number): number {
 export function multiply(a: number, b: number): number {
   return a * b
 }
+
+const unusedVar = 1 // E5 自愈演示：故意触发 eslint no-unused-vars
