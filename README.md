@@ -20,6 +20,7 @@
 | 3. 代理开发 | `fix-me` 标签 / `@claude` 交互 + 每周巡检 | `claude-agent.yml`、`weekly-maintenance.yml` |
 | 4. 自愈 CI | CI 失败自动呼叫代理修复（防循环 + 熔断） | `ci-auto-fix.yml` |
 | 5. 护栏 | 分支保护、CODEOWNERS 强制人工兜底 | `CODEOWNERS` + 下方启用清单 |
+| 6. 成本治理 | 峰谷窗口 + 分触发策略 + 日预算 + 谷时排队 | `ai-policy.yml`、`ai-gate.yml`、`ai-dispatcher.yml` |
 | 可选 | AI PR 审查（review-this 标签） | `pr-review.yml` |
 
 **架构特点：所有代理入口收敛到 `claude-agent.yml` 一处。** 自愈和巡检不直接跑代理，
@@ -89,6 +90,7 @@ GitHub 有递归保护：**GITHUB_TOKEN 产生的动作不会触发新的 workfl
 | 自动合并 | 等 Dependabot 开一个 patch PR | 自动批准 + CI 绿后自动 squash 合并 |
 | 巡检 | Actions 页手动触发「Weekly Maintenance」 | 创建巡检 issue → 打 fix-me → 代理产出 PR 或报告 |
 | PR 审查 | 给任意 PR 打 `review-this` 标签 | 收到分级行内审查评论（🔴🟡🔵） |
+| 成本排队 | 峰时（如工作日白天）建 issue 打 `fix-me` | 被换成 `ai-queue` + 排队评论；等谷时或手动触发 AI Dispatcher 后自动处理 |
 
 ## 分级合并策略（已内置）
 
@@ -110,11 +112,49 @@ GitHub 有递归保护：**GITHUB_TOKEN 产生的动作不会触发新的 workfl
 - 各 workflow 的 permissions 按需最小化声明
 - `AGENTS.md` 红线经 `CLAUDE.md` 注入到每次代理执行（Claude Code 原生读取）
 
+## 成本治理：AI 何时允许花钱（第 6 层）
+
+所有消耗 AI 的入口（fix-me / @claude / 自愈 / 审查 / 巡检）先过
+**ai-gate** 再到代理。策略集中在 `.github/ai-policy.yml`，改完即时生效：
+
+```yaml
+timezone: Asia/Shanghai     # 时区
+offpeak_start: "22:00"      # 谷时窗口起点（跨零点写 22:00 / 08:00 即可）
+offpeak_end:   "08:00"
+offpeak_weekend_all_day: true
+
+policy_mention: always      # @claude 交互：有人在等 → 永远放行
+policy_fix_me: offpeak      # issue 实现：非紧急 → 排队到谷时
+policy_ci_autofix: always   # CI 自愈：主干被阻塞 → 立即修
+policy_review: always       # AI 审查
+policy_dispatch: always     # 手动入口
+
+budget_runs_per_day: 20     # 每日运行上限（两入口合计，保守计数）
+max_turns_peak: 50          # 峰时单次轮次上限
+max_turns_offpeak: 80       # 谷时单价低 → 允许跑更久
+dispatch_batch: 3           # 谷时调度器每 30 分钟放行几个排队任务
+```
+
+**运行时行为**：
+
+| 场景 | 闸门动作 |
+|---|---|
+| 谷时窗口外的 `fix-me` / `review-this` | 自动换成排队标签（`ai-queue` / `ai-queue-review`）+ 评论告知，谷时批量唤醒 |
+| 排队期间需要插队 | 给目标加 `urgent` 标签 → 直通闸门立即处理 |
+| 每日运行数达上限 | 拒绝并评论原因（预算、调整入口都写在评论里） |
+| 谷时（工作日夜里 + 周末全天，`ai-dispatcher` 定时） | 按剩余预算小批量放行队列——平滑支出，避免成本尖峰 |
+
+排队的本质是**换标签**：谷时调度器用 PAT 把 `ai-queue` 换回 `fix-me`，
+复用同一条 labeled 触发链路——不引入队列服务，成本治理零基础设施。
+
+想完全关掉治理（例如刚开荒想随时测试）：把全部 `policy_*` 改成 `always` 即可。
+
 ## 进阶（跑顺后再加）
 
 - **换代理实现**：只改 `claude-agent.yml`（OpenHands CLI、Codex、自研 worker 均可），
   其余四层不感知
 - **审查代理闭环**：自愈修复后的 PR 自动打 `review-this`，让审查代理先 vet 一遍再交人工
-- **成本控制**：调低 `claude-agent.yml` 的 `--max-turns`（简单任务 20 足够）
+- **成本控制**：调策略集中在 `.github/ai-policy.yml`——峰谷窗口、每日预算、
+  分触发放行、谷时排队，详见「成本治理」一节
 - **preview 环境**：接 Cloudflare Pages / Vercel，代理 PR 自动出预览链接
 - **覆盖率门禁**：CI 加覆盖率阈值，让「不许降覆盖」成为机器强制

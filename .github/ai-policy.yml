@@ -1,0 +1,40 @@
+# ============================================================
+# AI 调用策略 —— 单一事实来源：决定「AI 何时允许花钱」。
+# 修改即时生效（下次触发时重新读取），无需改动任何 workflow。
+#
+# 扁平 key: value 结构是刻意的 —— workflow 里用 grep 解析，避免依赖 YAML 库。
+# 值后可以写 # 注释。
+# ============================================================
+
+# 时区：下面所有时间按此时区解释（GitHub runner 本身是 UTC，会自动换算）
+timezone: Asia/Shanghai
+
+# 谷时窗口（便宜时段）：24h 制 HH:MM，支持跨零点（start > end 即跨天）
+offpeak_start: "22:00"
+offpeak_end: "08:00"
+# 周末整天都算谷时
+offpeak_weekend_all_day: true
+
+# 分触发策略：always（永远放行）| offpeak（仅谷时，否则排队等谷时）| peak（仅峰时，否则排队）
+#   mention    @claude 交互评论——有人在场等结果，建议 always
+#   fix_me     issue 实现——非紧急，默认攒到谷时批量跑（配 urgent 标签可插队）
+#   ci_autofix CI 自愈——主干被红 PR 阻塞，建议 always
+#   review     AI PR 审查
+#   dispatch   workflow_dispatch 手动入口——管理员操作，建议 always
+policy_mention: always
+policy_fix_me: offpeak
+policy_ci_autofix: always
+policy_review: always
+policy_dispatch: always
+
+# 每日预算：每天最多允许的 AI 运行次数（claude-agent + pr-review 合计；
+# 按「当日 run 数」保守计数，含极少数被闸门拒绝的 run——宁可提前停，不可超支）
+budget_runs_per_day: 20
+
+# 单次成本护栏：交互触发的最大轮次（谷时单价低，允许跑更久）
+max_turns_peak: 50
+max_turns_offpeak: 80
+
+# 谷时调度器每批最多放行的排队任务数（调度器每 30 分钟跑一次，
+# 小批次 = 平滑支出，避免谷时刚开始的成本尖峰）
+dispatch_batch: 3

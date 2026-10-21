@@ -1,0 +1,103 @@
+# 成本治理 · 谷时调度器 —— 把 AI 闸门排队的任务在便宜时段批量唤醒。
+#
+# 调度（cron 为 UTC）：
+#   工作日 UTC 14:00–23:59 每 30 分钟  = 北京 22:00–08:00（工作日夜里）
+#   周末   UTC 00:00–13:59 每小时      = 北京 08:00–21:59（周末全天谷时）
+# 到点后仍以 ai-policy.yml 为准做二次校验（窗口 + 剩余预算），不满足即空转退出。
+#
+# 必须用 PAT：用 GITHUB_TOKEN 重新打的 fix-me 标签不会触发 Claude Agent。
+name: AI Dispatcher
+
+on:
+  schedule:
+    - cron: '*/30 14-23 * * 1-5'
+    - cron: '0 0-13 * * 6,7'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+  actions: read
+
+jobs:
+  drain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
+      PAT: ${{ secrets.PAT_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: 前置校验（谷时窗口 + 剩余预算）
+        run: |
+          set -euo pipefail
+          [[ -n "$PAT" ]] || {
+            echo "::error title=缺少 PAT_TOKEN::排队标签用 GITHUB_TOKEN 重新打上不会触发 Claude Agent，调度器无意义。配置方法见 README「关于 PAT」。"
+            exit 1
+          }
+          p() { grep -E "^$1:" .github/ai-policy.yml | head -1 | cut -d':' -f2- | awk -F'#' '{print $1}' | tr -d ' "'; }
+          TZ_CFG=$(p timezone)
+          S=$((10#$(p offpeak_start | tr -d ':'))) # 强制十进制，防前导零被当八进制
+          E=$((10#$(p offpeak_end | tr -d ':')))
+          WEEKEND_ALL=$(p offpeak_weekend_all_day)
+          BUDGET=$(p budget_runs_per_day)
+          BATCH=$(p dispatch_batch)
+
+          NOW=$((10#$(TZ="$TZ_CFG" date +%H%M)))
+          DOW=$(TZ="$TZ_CFG" date +%u)
+          if [[ "$WEEKEND_ALL" == true && "$DOW" -ge 6 ]]; then OK=1
+          elif (( S <= E )); then (( NOW >= S && NOW < E )) && OK=1 || true
+          else (( NOW >= S || NOW < E )) && OK=1 || true
+          fi
+          [[ "${OK:-0}" == 1 ]] || { echo "::notice::当前不是谷时窗口，本次不排发"; exit 0; }
+
+          CUTOFF=$(TZ="$TZ_CFG" date -d 'today 00:00' +%s)
+          count_runs() {
+            gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$1/runs?per_page=100" \
+              --argjson cutoff "$CUTOFF" \
+              --jq '[.workflow_runs[] | select((.created_at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) >= $cutoff)] | length'
+          }
+          TODAY=$(( $(count_runs claude-agent.yml) + $(count_runs pr-review.yml) ))
+          REMAIN=$(( BUDGET - TODAY ))
+          if (( REMAIN <= 0 )); then
+            echo "::notice::今日预算已用完（$TODAY/$BUDGET），本次不排发"
+            exit 0
+          fi
+          ALLOWED=$(( REMAIN < BATCH ? REMAIN : BATCH ))
+          echo "allowed=$ALLOWED" >> "$GITHUB_ENV"
+          echo "remained=$(( TODAY ))/$BUDGET，本次放行 $ALLOWED 个"
+
+      - name: 确保队列标签存在
+        run: |
+          gh label create ai-queue --repo "$GITHUB_REPOSITORY" --color 1d76db --description "排队：待谷时由代理处理" --force
+          gh label create ai-queue-review --repo "$GITHUB_REPOSITORY" --color 1d76db --description "排队：待谷时 AI 审查" --force
+          gh label create urgent --repo "$GITHUB_REPOSITORY" --color e11d21 --description "直通 AI 闸门，立即处理" --force
+
+      - name: 排发队列（urgent 优先，其次 FIFO）
+        run: |
+          set -euo pipefail
+          N="${{ env.allowed }}"
+          echo "本次允许放行：$N"
+
+          # 排队 issue：urgent 在前
+          QUEUED=$(gh issue list --repo "$GITHUB_REPOSITORY" --label ai-queue --state open --json number,labels \
+            --jq 'sort_by(any(.labels[]; .name == "urgent")) | reverse | .[].number')
+          # 排队 PR：AI 审查
+          QUEUED_PR=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --json number,labels \
+            --jq '.[] | select(any(.labels[]; .name == "ai-queue-review")) | .number')
+
+          {
+            [[ -n "$QUEUED" ]] && while read -r n; do echo "issue $n"; done <<< "$QUEUED"
+            [[ -n "$QUEUED_PR" ]] && while read -r n; do echo "pr $n"; done <<< "$QUEUED_PR"
+          } | head -n "$N" | while read -r kind num; do
+            [[ -n "$kind" && -n "$num" ]] || continue
+            echo "→ 排发 $kind #$num"
+            if [[ "$kind" == issue ]]; then
+              gh issue edit "$num" --repo "$GITHUB_REPOSITORY" --remove-label ai-queue --add-label fix-me
+            else
+              gh pr edit "$num" --repo "$GITHUB_REPOSITORY" --remove-label ai-queue-review --add-label review-this
+            fi
+          done
+          echo "排发完成"

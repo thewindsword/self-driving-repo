@@ -2,11 +2,13 @@
 #
 # 与自愈同理：不直接跑代理，而是创建 issue 并打 fix-me 唤起 Claude Agent。
 # 去重：已存在未关闭的巡检 issue 时不重复创建（README「安全边界」）。
+# 时间刻意落在谷时窗口（北京时间周一 23:43 = UTC 15:43，
+# 与 .github/ai-policy.yml 的 offpeak 一致），巡检的 fix-me 无需排队直达代理。
 name: Weekly Maintenance
 
 on:
   schedule:
-    - cron: '23 9 * * 1' # 每周一 09:23 UTC（错开整点高峰）
+    - cron: '43 15 * * 1'
   workflow_dispatch:
 
 permissions:
@@ -34,6 +36,9 @@ jobs:
           gh label create maintenance --repo "$GITHUB_REPOSITORY" --color 0e8a16 --description "每周巡检" --force
           gh label create review-this --repo "$GITHUB_REPOSITORY" --color fbca04 --description "触发 AI PR 审查" --force
           gh label create needs-human --repo "$GITHUB_REPOSITORY" --color e11d21 --description "自动处理达上限，转人工" --force
+          gh label create ai-queue --repo "$GITHUB_REPOSITORY" --color 1d76db --description "排队：待谷时由代理处理" --force
+          gh label create ai-queue-review --repo "$GITHUB_REPOSITORY" --color 1d76db --description "排队：待谷时 AI 审查" --force
+          gh label create urgent --repo "$GITHUB_REPOSITORY" --color e11d21 --description "直通 AI 闸门，立即处理" --force
 
       - name: 巡检去重
         id: dedup

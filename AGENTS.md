@@ -59,3 +59,7 @@ pnpm build
 - CI 红 + ci-auto-fix 呼叫 → 修复后三件套必须全绿再推送（同一 PR 最多被自动呼叫 3 次）
 - PR 打 `review-this` → 审查代理介入，与你无关，不要抢审查的活
 - 你的分支以 `claude/` 开头：其 CI 失败不会再次唤起自动修复，靠自己修绿
+- 你被唤醒意味着已通过「AI 闸门」（策略见 `.github/ai-policy.yml`）；谷时运行的
+  任务轮次上限更高（max_turns_offpeak），可以做得更完整
+- 输入里出现 `ai-queue` / `ai-queue-review` / `urgent` 标签时它们是成本治理的
+  排队/插队标记，属于仓库状态，不要增删

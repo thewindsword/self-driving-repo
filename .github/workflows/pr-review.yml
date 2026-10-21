@@ -3,6 +3,7 @@
 # 与代理开发分离：审查不自动改代码，只输出分级评论
 # （🔴 必须修复 / 🟡 建议 / 🔵 可选），行内问题用行内评论指出。
 # 模型认证方式与 claude-agent.yml 保持一致（三选一，见 README「配置密钥」）。
+# 成本治理：先过 ai-gate.yml（policy_review），非允许窗口自动排队到谷时。
 #
 # 已知边界：fork PR 的 token 只读，审查仅对本仓库分支开的 PR 生效。
 name: PR AI Review
@@ -19,8 +20,18 @@ permissions:
   actions: read
 
 jobs:
-  review:
+  gate:
     if: github.event.label.name == 'review-this'
+    uses: ./.github/workflows/ai-gate.yml
+    with:
+      trigger: review
+      urgent: ${{ contains(github.event.pull_request.labels.*.name, 'urgent') }}
+      target_kind: pr
+      target_number: ${{ github.event.pull_request.number }}
+
+  review:
+    needs: gate
+    if: github.event.label.name == 'review-this' && needs.gate.outputs.decision == 'allow'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
