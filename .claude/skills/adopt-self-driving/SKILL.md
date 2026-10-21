@@ -79,6 +79,9 @@ description: 将一个现有的代码仓库改造成 self-driving 自维护仓�
      `gh api repos/{owner}/{repo}/branches/main/protection -X PUT --input -` +
      `{"required_status_checks":{"strict":true,"contexts":["verify"]},"enforce_admins":true,"required_pull_request_reviews":{"required_approving_review_count":0,"require_code_owner_reviews":false},"restrictions":null,"allow_force_pushes":false,"allow_deletions":false}`
   5. 预建标签：`fix-me`、`review-this`、`urgent`
+  6. （可选）启用每周巡检：Settings → Secrets and variables → Actions →
+     **Variables** → `SELF_DRIVING_MAINTENANCE` = `true`——不设则定时巡检
+     静默（模板默认零定期 AI 调用），手动 dispatch 不受影响
 - PR 合并后再进入第 6 步
 
 ## 6. 冒烟三连（每步通过再下一步；失败先查 references/pitfalls.md）

@@ -150,10 +150,9 @@ GitHub 有递归保护：**GITHUB_TOKEN 产生的动作不会触发新的 workfl
 
 想完全关掉治理（例如刚开荒想随时测试）：把全部 `policy_*` 改成 `always` 即可。
 
-**模板默认静默**：唯一的定期 AI 消耗是每周巡检——它需要显式启用
-（Settings → Variables 配 `SELF_DRIVING_MAINTENANCE = true`；手动 dispatch 不受限）。
-其余定时器不烧 AI：谷时调度器仅在队列非空时唤醒代理；Dependabot 仅在其 PR
-弄红 CI 时触发一次自愈（熔断上限 3 次）。
+**模板默认静默**：唯一的定期 AI 消耗（每周巡检）默认关闭，采用者设变量
+`SELF_DRIVING_MAINTENANCE=true` 启用（步骤见 TUTORIAL §3⑤，手动 dispatch 不受限）。
+其余定时器队列空时不烧 AI。
 
 ## 模型端点：多厂商与动态切换
 
