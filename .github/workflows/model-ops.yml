@@ -86,6 +86,9 @@ jobs:
             echo "::error::模型列表为空——key 与 active 厂商不匹配？或接口返回异常"
             exit 1
           fi
+          # 模型名非敏感（本就写入公开 summary），同步打进日志便于排障
+          echo "实时列表："
+          echo "$MODELS"
           {
             echo "models<<MODELS_EOF"
             echo "$MODELS"
