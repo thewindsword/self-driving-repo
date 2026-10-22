@@ -124,10 +124,12 @@ jobs:
             DECISION=allow; REASON="urgent 标签直通（原判定：${REASON}）"
           fi
 
-          # —— 每日预算（本地零点起，claude-agent + pr-review 合计；保守计数）——
-          # cutoff 用 UTC ISO 字符串与 created_at 字典序比较：gh api 不支持 jq 的
-          # --argjson，内嵌 gojq 对正则转义也严格，字符串比较最稳（API 返回无毫秒）
-          CUTOFF=$(TZ="$TZ_CFG" date -d 'today 00:00' --utc +%Y-%m-%dT%H:%M:%SZ)
+          # —— 每日预算（策略时区零点起，claude-agent + pr-review 合计；保守计数）——
+          # cutoff 用 UTC ISO 字符串与 created_at 字典序比较（API 返回无毫秒）。
+          # 两步法：GNU date 的 --utc 会连 -d 的解析一起切到 UTC，一步写法拿到
+          # UTC 零点而非策略时区零点（实测曾让夜间预算多吃前一天的全部运行）
+          CUTOFF_EPOCH=$(TZ="$TZ_CFG" date -d 'today 00:00' +%s)
+          CUTOFF=$(date -u -d "@$CUTOFF_EPOCH" +%Y-%m-%dT%H:%M:%SZ)
           count_runs() {
             gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$1/runs?per_page=100" \
               --jq '[.workflow_runs[] | select(.created_at >= "'"$CUTOFF"'")] | length'
