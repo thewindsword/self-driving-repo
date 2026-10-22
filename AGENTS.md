@@ -5,14 +5,14 @@
 
 ## 1. 项目概览
 本仓库是一个「自维护、自开发」模板：触发器（issue / PR 评论 / CI 失败 / 定时巡检）
-→ 代理改代码 → CI 验证 → 分级合并。五层架构与文件对应关系见 README。
+→ 代理改代码 → CI 验证 → 分级合并。七层架构与文件对应关系见 README。
 
 <!-- TODO（模板使用者）：换成你项目的一两句话简介——是什么、为谁服务。 -->
 
 ## 2. 技术栈与目录结构
 - 运行时 Node.js ≥ 22；包管理 pnpm（`package.json` 的 `packageManager` 字段锁定版本）
 - 语言 TypeScript（strict）；测试 vitest；Lint eslint（flat config）
-- `src/` 源码与测试；`.github/workflows/` 五层自动化；根目录 `AGENTS.md` / `CLAUDE.md` / `CODEOWNERS` 为护栏
+- `src/` 源码与测试；`.github/workflows/` 七层自动化；`.claude/skills/` 接入技能；根目录 `AGENTS.md` / `CLAUDE.md` / `CODEOWNERS` 为护栏
 
 <!-- TODO（模板使用者）：替换成你项目的实际技术栈与目录说明，例如
 - 前端：React 19 + TypeScript + Vite（/web）
