@@ -54,7 +54,10 @@ jobs:
           [[ "${OK:-0}" == 1 ]] || { echo "::notice::当前不是谷时窗口，本次不排发"; exit 0; }
 
           # cutoff 用 UTC ISO 字符串与 created_at 字典序比较（同 ai-gate.yml 的修复）
-          CUTOFF=$(TZ="$TZ_CFG" date -d 'today 00:00' --utc +%Y-%m-%dT%H:%M:%SZ)
+          # 两步法取「策略时区零点」的 UTC ISO（同 ai-gate.yml 的修复：
+          # --utc 会连 -d 解析一起切 UTC，一步写法拿到的是 UTC 零点）
+          CUTOFF_EPOCH=$(TZ="$TZ_CFG" date -d 'today 00:00' +%s)
+          CUTOFF=$(date -u -d "@$CUTOFF_EPOCH" +%Y-%m-%dT%H:%M:%SZ)
           count_runs() {
             gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$1/runs?per_page=100" \
               --jq '[.workflow_runs[] | select(.created_at >= "'"$CUTOFF"'")] | length'

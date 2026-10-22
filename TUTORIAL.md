@@ -105,6 +105,7 @@ EOF
 | `unknown flag: --argjson` | gh api 不支持 jq 的传参 flag | 用 ISO 字符串比较（模板已内置） |
 | 定时 workflow 从未运行、每次 push 反而失败 | cron 星期字段写了 `7`——GitHub 只认 **0-6**（周日=0），一个非法 cron 让整个文件解析失败 | 写 `6,0`；上线后手动 dispatch 一次即可验证文件可解析 |
 | 审查评论已发出但 run 判负 `exceeding the configured maximum` | 轮次上限过紧（带行内评论的审查实测 16+ 轮） | 调大 `--max-turns`（本模板审查用 25） |
+| 谷时排发总在半夜报「预算耗尽」跳过 | `date -d 'today 00:00' --utc` 的 `--utc` 会连 `-d` 的**解析**一起切到 UTC——cutoff 变成 UTC 零点，夜间把前一天的全部运行计入今日 | 两步法：先取策略时区零点的 epoch（与时区无关），再 `date -u -d @epoch` 转 UTC ISO（模板已内置） |
 
 ## 6. 日常工作流（自开发与自维护）
 
