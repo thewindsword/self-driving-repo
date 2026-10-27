@@ -173,7 +173,7 @@ GitHub 有递归保护：**GITHUB_TOKEN 产生的动作不会触发新的 workfl
 ## 进阶（跑顺后再加）
 
 - **换代理实现**：只改 `claude-agent.yml`（OpenHands CLI、Codex、自研 worker 均可），
-  其余四层不感知
+  其余六层不感知
 - **审查代理闭环**：自愈修复后的 PR 自动打 `review-this`，让审查代理先 vet 一遍再交人工
 - **成本控制**：调策略集中在 `.github/ai-policy.yml`——峰谷窗口、每日预算、
   分触发放行、谷时排队，详见「成本治理」一节
