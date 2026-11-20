@@ -97,9 +97,18 @@ jobs:
           QUEUED_PR=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --json number,labels \
             --jq '.[] | select(any(.labels[]; .name == "ai-queue-review")) | .number')
 
+          # 队列为空：无事可做不是失败，直接跳过本次（否则上面两组短路命令会以
+          # 退出码 1 收尾，叠加 pipefail + set -e 把整个 job 染红）
+          if [[ -z "$QUEUED" && -z "$QUEUED_PR" ]]; then
+            echo "::notice::队列为空，本次无需排发"
+            exit 0
+          fi
+
           {
-            [[ -n "$QUEUED" ]] && while read -r n; do echo "issue $n"; done <<< "$QUEUED"
-            [[ -n "$QUEUED_PR" ]] && while read -r n; do echo "pr $n"; done <<< "$QUEUED_PR"
+            # 注意用 if/fi 而非 [[ ]] && 短路：后者条件为假时命令状态为 1，
+            # 会经 pipefail 污染整条管道的退出码（无排队 PR 时 job 必红的根因）
+            if [[ -n "$QUEUED" ]]; then while read -r n; do echo "issue $n"; done <<< "$QUEUED"; fi
+            if [[ -n "$QUEUED_PR" ]]; then while read -r n; do echo "pr $n"; done <<< "$QUEUED_PR"; fi
           } | head -n "$N" | while read -r kind num; do
             [[ -n "$kind" && -n "$num" ]] || continue
             echo "→ 排发 $kind #$num"
